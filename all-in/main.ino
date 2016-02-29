@@ -53,6 +53,9 @@ bool inSleep = false;
 
 #define PUBLISH_DELAY (60 * 1000)
 
+// how long to try and fix the GPS
+#define GPS_FIX_TIME (3 * 60 * 1000)
+
 // if no motion for 3 minutes, sleep! (milliseconds)
 #define NO_MOTION_IDLE_SLEEP_DELAY (3 * 60 * 1000)
 
@@ -130,11 +133,8 @@ void loop() {
                     if (lowBatt) { trackerMode = 5; }
                     break;
                 }
-                // no GPS after 2 minutes
-                // TODO return to shorter value - reduced for testing
-                /* if (millis() > 120000) { */
-
-                if (millis() > 40000) {
+                // no GPS after given time
+                if (millis() > GPS_FIX_TIME) {
                     blink(5);
                     // been a while and still no connect
                     if (Particle.connected() == false) {
