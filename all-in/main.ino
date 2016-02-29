@@ -110,8 +110,6 @@ void loop() {
             debugPrint("case 2: acquiring GPS");
             if (inSleep) {
                 debugPrint("waking!");
-                // reenable the GPS
-                digitalWrite(D6, HIGH);
                 // avoid going right back to sleep
                 lastMotion = now;
                 inSleep = false;
