@@ -20,6 +20,7 @@ FuelGauge fuel;
 #define CLICKTHRESHHOLD 20
 
 
+bool debug = true;
 int lastSecond = 0;
 bool ledState = false;
 
@@ -45,8 +46,10 @@ time_t lastIdleCheckin = 0;
 /* int lastKnownClockHour = 0; */
 
 unsigned long lastGPSPoll = 0;
-unsigned long GPSPollInterval = 4000;
+// TODO is it make any different slow or fast? // 3000
+unsigned long GPSPollInterval = 500;
 bool hasMotion = false;
+bool inSleep = false;
 
 #define PUBLISH_DELAY (60 * 1000)
 
@@ -64,6 +67,7 @@ bool hasMotion = false;
 
 
 void setup() {
+    debugPrint("setup");
     lastMotion = 0;
     lastPublish = 0;
 
@@ -101,49 +105,61 @@ void setup() {
 
 void loop() {
     unsigned long now = millis();
-    debugPrint("top of loop");
     switch (trackerMode) {
         case 2: //acquiring GPS
-            debugPrint("case 2");
+            debugPrint("case 2: acquiring GPS");
+            if (inSleep) {
+                debugPrint("waking!");
+                // reenable the GPS
+                digitalWrite(D6, HIGH);
+                // avoid going right back to sleep
+                lastMotion = now;
+                inSleep = false;
+            }
             // only read GPS every<GPSPollInterval> seconds
             debugPrint(String::format("now: %lu, lastPoll:%lu", now, lastGPSPoll));
-            /* debugPrint(String::format("now: %s, lastPoll: %s", now, lastGPSPoll)); */
             if (now > (lastGPSPoll + GPSPollInterval)) {
-
                 lastGPSPoll = now;
-                // TODO need to convert this to String?
-                //error: invalid conversion from 'char' to 'const char*'
-                //debugPrint(c);
+                blink(1);
                 checkGPS();
                 bool lowBatt = fuel.getSoC() < .15;
-
-                if (GPS.newNMEAreceived()) {
-                    blink(1);
-                    if ((GPS.year != 80) && (GPS.year != 0)) {
-
-                        // have GPS
-                        debugPrint("have GPS signal");
-                        Particle.connect();
-                        publishGPS();
-                        trackerMode = 3;
-                        // over-ride and set low power mode if battery low
-                        if (lowBatt) { trackerMode = 5; }
-                        break;
-                    }
+                if (GPS.latitude != 0) {
+                    debugPrint("have GPS signal");
+                    Particle.connect();
+                    publishGPS();
+                    trackerMode = 3;
+                    // over-ride and set low power mode if battery low
+                    if (lowBatt) { trackerMode = 5; }
+                    break;
                 }
-                // no GPS yet
-                if (millis() > 120000) {
+                // no GPS after 2 minutes
+                // TODO return to shorter value - reduced for testing
+                /* if (millis() > 120000) { */
+
+                if (millis() > 40000) {
                     blink(5);
                     // been a while and still no connect
                     if (Particle.connected() == false) {
                         Particle.connect();
+                        debugPrint("connecting");
                         // clock syncs here
                     }
-                    Particle.publish(MY_NAME + String("_status"), "GPS lock Failure");
-                    // slow down the poll?
-                    // TODO - even less in lowbattery mode?
-                    GPSPollInterval = 30000;
-                    delay(10000);
+                    for (int i = 0; i < 70; i++) {
+                        if (Cellular.ready()) {
+                            debugPrint("Cellular ready");
+                            break;
+                        }
+                        debugPrint("wait cell ready");
+                        delay(1000);
+                    }
+                    debugPrint("sending GPS lock failure");
+                    Particle.publish("S", "F");
+                    delay(3000);
+                    inSleep = true;
+                    accel.setClick(0, CLICKTHRESHHOLD);
+                    // TODO - even more in lowbattery mode?
+                    // TODO make this at least 5min - reduced for testing
+                    System.sleep(SLEEP_MODE_DEEP, (1 * 60));
                 }
             }
             break;
@@ -160,8 +176,6 @@ void loop() {
             // if we get two in a row, then we'll connect to the internet and start reporting in.
             hasMotion = digitalRead(WKP);
 
-            //digitalWrite(D7, (hasMotion) ? HIGH : LOW);
-            blink(3);
 
             if (hasMotion) {
                 debugPrint("BUMP");
@@ -182,7 +196,8 @@ void loop() {
                     Particle.connect();
                 }
 
-                Particle.publish(MY_NAME + String("_status"), "miss you <3");
+                // TODO consider dropping  - GPS sent on wake
+                Particle.publish("S", "I");
                 lastIdleCheckin = now;
             }
 
@@ -190,6 +205,7 @@ void loop() {
             // have we published recently?
             debugPrint("lastPublish is " + String(lastPublish));
             if (((millis() - lastPublish) > PUBLISH_DELAY) || (lastPublish == 0)) {
+                blink(3);
                 lastPublish = millis();
                 checkGPS();
                 publishGPS();
@@ -200,8 +216,9 @@ void loop() {
             if ((now - lastMotion) > NO_MOTION_IDLE_SLEEP_DELAY) {
                 // hey, it's been longer than xx minutes and nothing is happening, lets go to sleep.
                 // if the accel triggers an interrupt, we'll wakeup earlier than that.
-
-                Particle.publish(MY_NAME + String("_status"), "sleeping!");
+                Serial.println(now);
+                debugPrint("sleeping");
+                Particle.publish("S", "S");
 
                 lastPublish = 0;
                 lastMotion = 0;
@@ -217,9 +234,12 @@ void loop() {
 
                 // wake in GPS acquisition mode
                 trackerMode = 2;
-                /* System.sleep(uint16_t wakeUpPin, uint16_t edgeTriggerMode, long seconds) */
                 blink(4);
-                System.sleep(WKP, CHANGE, HOW_LONG_SHOULD_WE_SLEEP);
+                inSleep = true;
+                accel.setClick(1, CLICKTHRESHHOLD);
+                System.sleep(SLEEP_MODE_DEEP, HOW_LONG_SHOULD_WE_SLEEP);
+                /* System.sleep(uint16_t wakeUpPin, uint16_t edgeTriggerMode, long seconds) */
+                /* System.sleep(WKP, CHANGE, HOW_LONG_SHOULD_WE_SLEEP); */
             }
             break;
         case 5: //low battery
@@ -236,11 +256,12 @@ void loop() {
             // wake in GPS acquisition mode
             trackerMode = 2;
             // go into true deep sleep - this should NOT wake on motion
+            blink(4);
+            inSleep = true;
+            accel.setClick(0, CLICKTHRESHHOLD);
             System.sleep(SLEEP_MODE_DEEP, HOW_LONG_SHOULD_WE_SLEEP);
-            break;
-
     }
-    delay(1000);
+    delay(100);
 }
 
 
@@ -271,9 +292,13 @@ void checkGPS() {
         //if (!hasGPSTime) {
         //   Serial.print(c);
         //}
+        Serial.print(c);
 
         if (GPS.newNMEAreceived()) {
+            debugPrint("NMEA received");
             GPS.parse(GPS.lastNMEA());
+            debugPrint("GPS Latitude: ");
+            Serial.println(GPS.latitude);
         }
     }
 }
@@ -299,20 +324,20 @@ void publishGPS() {
         + ",\"soc\":"   + String(fuel.getSoC())
         + "}";
     blink(2);
-    Particle.publish(MY_NAME + String("_location"), gps_line, 60, PRIVATE);
+    Particle.publish("G", gps_line, 60, PRIVATE);
 }
 
 void blink(int ct) {
-    for(int i=0; i < ct; i++) {
+    for(int i = 0; i < ct; i++) {
         digitalWrite(D7, HIGH);
-        delay(100);
+        delay(50);
         digitalWrite(D7, LOW);
-        delay(200);
+        delay(100);
     }
 }
 
 void debugPrint(String msg) {
-    if (mySerial.available()) {
+    if (debug) {
         Serial.println(msg);
     }
 }
