@@ -36,7 +36,7 @@ FuelGauge fuel;
 
 #define GPS_POLL_INTERVAL 1000
 
-#define BUILD_VERSION 16
+#define BUILD_VERSION 17
 
 
 
@@ -274,7 +274,8 @@ void loop() {
             blink(4);
             inSleep = true;
             //TODO this should be safe, but debugging some overly sleepy
-            //accel.setClick(0, CLICKTHRESHHOLD);
+            accel.setClick(0, CLICKTHRESHHOLD);
+            delay(5000);
             System.sleep(SLEEP_MODE_DEEP, HOW_LONG_SHOULD_WE_SLEEP);
         case 6: // charge mode
             if (Particle.connected() == true) {
