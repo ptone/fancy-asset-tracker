@@ -36,7 +36,7 @@ FuelGauge fuel;
 
 #define GPS_POLL_INTERVAL 1000
 
-#define BUILD_VERSION 5
+#define BUILD_VERSION 12
 
 
 
@@ -104,6 +104,7 @@ void setup() {
 
 
 void loop() {
+    // note millis resets to 0 on every wake
     unsigned long now = millis();
     dPrint(String::format("now: %lu", now));
 
@@ -137,10 +138,13 @@ void loop() {
                 if (GPS.latitude != 0) {
                     dPrint("have GPS signal");
                     Particle.connect();
+                    waitCellReady();
                     publishGPS();
-                    if (!GPSFixedOnce) {
+                    if (GPSFixedOnce == false) {
                         GPSFixedOnce = true;
                         Particle.publish("S", String::format("C%lu", now));
+                    } else {
+                        Particle.publish("S", String::format("c%lu", now));
                     }
                     trackerMode = 3;
                     // over-ride and set low power mode if battery low
@@ -157,14 +161,7 @@ void loop() {
                         dPrint("connecting");
                         // clock syncs here
                     }
-                    for (int i = 0; i < 70; i++) {
-                        if (Cellular.ready()) {
-                            dPrint("Cellular ready");
-                            break;
-                        }
-                        dPrint("wait cell ready");
-                        delay(1000);
-                    }
+                    waitCellReady();
                     dPrint("sending GPS lock failure");
                     Particle.publish("S", "F");
                     delay(3000);
@@ -234,7 +231,8 @@ void loop() {
                 // if the accel triggers an interrupt, we'll wakeup earlier than that.
                 Serial.println(now);
                 dPrint("sleeping");
-                accel.setClick(1, CLICKTHRESHHOLD);
+                //TODO see if works better if only set in setup
+                //accel.setClick(1, CLICKTHRESHHOLD);
                 Particle.publish("S", "S");
 
                 lastPublish = 0;
@@ -274,7 +272,8 @@ void loop() {
             // go into true deep sleep - this should NOT wake on motion
             blink(4);
             inSleep = true;
-            accel.setClick(0, CLICKTHRESHHOLD);
+            //TODO this should be safe, but debugging some overly sleepy
+            //accel.setClick(0, CLICKTHRESHHOLD);
             System.sleep(SLEEP_MODE_DEEP, HOW_LONG_SHOULD_WE_SLEEP);
         case 6: // charge mode
             if (Particle.connected() == true) {
@@ -303,6 +302,20 @@ void initAccel() {
     accel.setClick(1, CLICKTHRESHHOLD);//, 0, 100, 50);
 }
 
+
+bool waitCellReady() {
+    // note, in theory particle.connect is blocking, but ....
+    for (int i = 0; i < 70; i++) {
+        if (Cellular.ready()) {
+            dPrint("Cellular ready");
+            return true;
+        }
+        dPrint("wait cell ready");
+        delay(1000);
+    }
+    dPrint("Failure to establish cell connection");
+    return false;
+}
 
 void checkGPS() {
     // process and dump everything from the module through the library.
