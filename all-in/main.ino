@@ -20,7 +20,7 @@ FuelGauge fuel;
 #define PUBLISH_DELAY (60 * 1000)
 
 // how long to try and fix the GPS
-#define GPS_FIX_TIME (3 * 60 * 1000)
+#define GPS_FIX_TIME (2 * 60 * 1000)
 
 // if no motion for 3 minutes, sleep! (milliseconds)
 #define NO_MOTION_IDLE_SLEEP_DELAY (3 * 60 * 1000)
@@ -34,10 +34,11 @@ FuelGauge fuel;
 // (seconds)
 #define MAX_IDLE_CHECKIN_DELAY (HOW_LONG_SHOULD_WE_SLEEP - 60)
 
-// lets keep the radio off until we get a fix, or 2 minutes go by.
-SYSTEM_MODE(SEMI_AUTOMATIC);
+#define GPS_POLL_INTERVAL 1000
 
-STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
+#define BUILD_VERSION 5
+
+
 
 bool debug = false;
 bool GPSFixedOnce = false;
@@ -45,10 +46,9 @@ unsigned long lastMotion = 0;
 unsigned long lastPublish = 0;
 time_t lastIdleCheckin = 0;
 unsigned long lastGPSPoll = 0;
-// TODO is it make any difference slow or fast? // 3000
-unsigned long GPSPollInterval = 500;
 bool hasMotion = false;
 bool inSleep = false;
+
 
 int trackerMode = 0;
 // 0 uninitialized (implicit)
@@ -59,8 +59,13 @@ int trackerMode = 0;
 // 5 low battery mode
 // 6 charging
 
+// lets keep the radio off until we get a fix, or 2 minutes go by.
+SYSTEM_MODE(SEMI_AUTOMATIC);
+
+STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
+
 void setup() {
-    debugPrint("setup");
+    dPrint("setup");
     lastMotion = 0;
     lastPublish = 0;
 
@@ -100,6 +105,8 @@ void setup() {
 
 void loop() {
     unsigned long now = millis();
+    dPrint(String::format("now: %lu", now));
+
     digitalWrite(D7, LOW);
     if (digitalRead(D2) == 0) {
         // pin D2 bridged to ground signals charging mode
@@ -107,32 +114,33 @@ void loop() {
         trackerMode = 6;
     } else {
         if (trackerMode == 6) {
+            // jumper just unplugged - go into acquisition mode
             trackerMode = 2;
         }
     }
     switch (trackerMode) {
         case 2: //acquiring GPS
-            debugPrint("case 2: acquiring GPS");
+            dPrint("case 2: acquiring GPS");
             if (inSleep) {
-                debugPrint("waking!");
+                dPrint("waking!");
                 // avoid going right back to sleep
                 lastMotion = now;
                 inSleep = false;
             }
-            // only read GPS every<GPSPollInterval> seconds
-            debugPrint(String::format("now: %lu, lastPoll:%lu", now, lastGPSPoll));
-            if (now > (lastGPSPoll + GPSPollInterval)) {
+            // only read GPS every<GPS_POLL_INTERVAL> seconds
+            dPrint(String::format("now: %lu, lastPoll:%lu", now, lastGPSPoll));
+            if (now > (lastGPSPoll + GPS_POLL_INTERVAL)) {
                 lastGPSPoll = now;
                 blink(1);
                 checkGPS();
                 bool lowBatt = fuel.getSoC() < .15;
                 if (GPS.latitude != 0) {
-                    debugPrint("have GPS signal");
+                    dPrint("have GPS signal");
                     Particle.connect();
                     publishGPS();
                     if (!GPSFixedOnce) {
                         GPSFixedOnce = true;
-                        Particle.publish("S", "C");
+                        Particle.publish("S", String::format("C%lu", now));
                     }
                     trackerMode = 3;
                     // over-ride and set low power mode if battery low
@@ -140,36 +148,39 @@ void loop() {
                     break;
                 }
                 // no GPS after given time
-                if (GPSFixedOnce && (millis() > GPS_FIX_TIME)) {
+                if ((debug || GPSFixedOnce) && (millis() > GPS_FIX_TIME)) {
                     //don't sleep unless we've had one GPS fix ever
                     blink(5);
                     // been a while and still no connect
                     if (Particle.connected() == false) {
                         Particle.connect();
-                        debugPrint("connecting");
+                        dPrint("connecting");
                         // clock syncs here
                     }
                     for (int i = 0; i < 70; i++) {
                         if (Cellular.ready()) {
-                            debugPrint("Cellular ready");
+                            dPrint("Cellular ready");
                             break;
                         }
-                        debugPrint("wait cell ready");
+                        dPrint("wait cell ready");
                         delay(1000);
                     }
-                    debugPrint("sending GPS lock failure");
+                    dPrint("sending GPS lock failure");
                     Particle.publish("S", "F");
                     delay(3000);
                     inSleep = true;
-                    accel.setClick(0, CLICKTHRESHHOLD);
+                    //accel.setClick(0, CLICKTHRESHHOLD);
                     // TODO - even more in lowbattery mode?
-                    // TODO make this at least 5min - reduced for testing
-                    System.sleep(SLEEP_MODE_DEEP, (1 * 60));
+                    if (debug) {
+                        System.sleep(SLEEP_MODE_DEEP, (60));
+                    } else {
+                        System.sleep(SLEEP_MODE_DEEP, (5 * 60));
+                    }
                 }
             }
             break;
         case 3: //active mode, watch accelerometer
-            debugPrint("case 3");
+            dPrint("case 3");
             if (lastIdleCheckin == 0) {
                 lastIdleCheckin = Time.now();
             }
@@ -183,11 +194,11 @@ void loop() {
 
 
             if (hasMotion) {
-                debugPrint("BUMP");
+                dPrint("BUMP");
                 lastMotion = now;
 
                 if (Particle.connected() == false) {
-                    debugPrint("CONNECTING DUE TO MOTION!");
+                    dPrint("CONNECTING DUE TO MOTION!");
                     Particle.connect();
                 }
             }
@@ -197,7 +208,7 @@ void loop() {
 
                 // it's been too long!  Lets say hey!
                 if (Particle.connected() == false) {
-                    debugPrint("CONNECTING DUE TO IDLE!");
+                    dPrint("CONNECTING DUE TO IDLE!");
                     Particle.connect();
                 }
 
@@ -208,7 +219,7 @@ void loop() {
 
 
             // have we published recently?
-            debugPrint("lastPublish is " + String(lastPublish));
+            dPrint("lastPublish is " + String(lastPublish));
             if (((millis() - lastPublish) > PUBLISH_DELAY) || (lastPublish == 0)) {
                 blink(3);
                 lastPublish = millis();
@@ -222,7 +233,7 @@ void loop() {
                 // hey, it's been longer than xx minutes and nothing is happening, lets go to sleep.
                 // if the accel triggers an interrupt, we'll wakeup earlier than that.
                 Serial.println(now);
-                debugPrint("sleeping");
+                dPrint("sleeping");
                 accel.setClick(1, CLICKTHRESHHOLD);
                 Particle.publish("S", "S");
 
@@ -295,7 +306,7 @@ void initAccel() {
 
 void checkGPS() {
     // process and dump everything from the module through the library.
-    debugPrint("check GPS");
+    dPrint("check GPS");
     while (mySerial.available()) {
         char c = GPS.read();
 
@@ -306,9 +317,9 @@ void checkGPS() {
         Serial.print(c);
 
         if (GPS.newNMEAreceived()) {
-            debugPrint("NMEA received");
+            dPrint("NMEA received");
             GPS.parse(GPS.lastNMEA());
-            debugPrint("GPS Latitude: ");
+            dPrint("GPS Latitude: ");
             Serial.println(GPS.latitude);
         }
     }
@@ -326,14 +337,16 @@ void publishGPS() {
     String gps_line =
           "{\"lat\":"    + String(convertDegMinToDecDeg(GPS.latitude))
         + ",\"lon\":-"   + String(convertDegMinToDecDeg(GPS.longitude))
-        + ",\"a\":"     + String(GPS.altitude)
-        + ",\"q\":"     + String(GPS.fixquality)
-        + ",\"spd\":"   + String(GPS.speed)
-        + ",\"mot\":"   + String(motionInTheLastMinute)
-        + ",\"s\": "  + String(GPS.satellites)
-        + ",\"vcc\":"   + String(fuel.getVCell())
-        + ",\"soc\":"   + String(fuel.getSoC())
+        + ",\"a\":"      + String(GPS.altitude)
+        + ",\"q\":"      + String(GPS.fixquality)
+        + ",\"spd\":"    + String(GPS.speed)
+        + ",\"mot\":"    + String(motionInTheLastMinute)
+        + ",\"s\": "     + String(GPS.satellites)
+        + ",\"vcc\":"    + String(fuel.getVCell())
+        + ",\"soc\":"    + String(fuel.getSoC())
+        + ",\"v\":"      + String(BUILD_VERSION)
         + "}";
+
     blink(2);
     Particle.publish("G", gps_line, 60, PRIVATE);
 }
@@ -347,7 +360,7 @@ void blink(int ct) {
     }
 }
 
-void debugPrint(String msg) {
+void dPrint(String msg) {
     if (debug) {
         Serial.println(msg);
     }
