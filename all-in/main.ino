@@ -44,7 +44,7 @@ bool debug = false;
 bool GPSFixedOnce = false;
 unsigned long lastMotion = 0;
 unsigned long lastPublish = 0;
-time_t lastIdleCheckin = 0;
+int lastIdleCheckin = 0;
 unsigned long lastGPSPoll = 0;
 bool hasMotion = false;
 bool inSleep = false;
@@ -213,8 +213,8 @@ void loop() {
                 }
 
                 // TODO consider dropping  - GPS sent on wake
-                Particle.publish("S", "I");
-                lastIdleCheckin = now;
+                Particle.publish("S", "I" + String(Time.now()));
+                lastIdleCheckin = Time.now();
             }
 
 
