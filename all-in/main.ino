@@ -36,7 +36,7 @@ FuelGauge fuel;
 
 #define GPS_POLL_INTERVAL 1000
 
-#define BUILD_VERSION 17
+#define BUILD_VERSION 18
 
 
 
@@ -152,6 +152,7 @@ void loop() {
                     break;
                 }
                 // no GPS after given time
+                // TODO if millis is retain on sleep properly - this fires too soon
                 if ((debug || GPSFixedOnce) && (millis() > GPS_FIX_TIME)) {
                     //don't sleep unless we've had one GPS fix ever
                     blink(5);
@@ -327,20 +328,19 @@ bool waitCellReady() {
 void checkGPS() {
     // process and dump everything from the module through the library.
     dPrint("check GPS");
-    while (mySerial.available()) {
-        char c = GPS.read();
+    bool gotValidData = false;
+    while (!gotValidData) {
+        while (mySerial.available()) {
+            char c = GPS.read();
+            Serial.print(c);
 
-        // lets echo the GPS output until we get a good clock reading, then lets calm things down.
-        //if (!hasGPSTime) {
-        //   Serial.print(c);
-        //}
-        Serial.print(c);
-
-        if (GPS.newNMEAreceived()) {
-            dPrint("NMEA received");
-            GPS.parse(GPS.lastNMEA());
-            dPrint("GPS Latitude: ");
-            Serial.println(GPS.latitude);
+            if (GPS.newNMEAreceived()) {
+                dPrint("NMEA received");
+                GPS.parse(GPS.lastNMEA());
+                dPrint("GPS Latitude: ");
+                Serial.println(GPS.latitude);
+                gotValidData = (GPS.latitude != 0);
+            }
         }
     }
 }
