@@ -36,7 +36,7 @@ FuelGauge fuel;
 
 #define GPS_POLL_INTERVAL 1000
 
-#define BUILD_VERSION 12
+#define BUILD_VERSION 16
 
 
 
@@ -142,9 +142,9 @@ void loop() {
                     publishGPS();
                     if (GPSFixedOnce == false) {
                         GPSFixedOnce = true;
-                        Particle.publish("S", String::format("C%lu", now));
+                        Particle.publish("S", String::format("C%lu", now / 1000));
                     } else {
-                        Particle.publish("S", String::format("c%lu", now));
+                        Particle.publish("S", String::format("c%lu", now / 1000));
                     }
                     trackerMode = 3;
                     // over-ride and set low power mode if battery low
@@ -251,7 +251,8 @@ void loop() {
                 trackerMode = 2;
                 blink(4);
                 inSleep = true;
-                System.sleep(SLEEP_MODE_DEEP, HOW_LONG_SHOULD_WE_SLEEP);
+                /* System.sleep(SLEEP_MODE_DEEP, HOW_LONG_SHOULD_WE_SLEEP); */
+                System.sleep(WKP, CHANGE, HOW_LONG_SHOULD_WE_SLEEP);
                 /* System.sleep(uint16_t wakeUpPin, uint16_t edgeTriggerMode, long seconds) */
                 /* System.sleep(WKP, CHANGE, HOW_LONG_SHOULD_WE_SLEEP); */
             }
@@ -282,7 +283,12 @@ void loop() {
             digitalWrite(D7, HIGH);
             delay(3000);
     }
-    delay(100);
+    if (debug){
+        //lets not flood the serial console...
+        delay(1000);
+    } else {
+        delay(10);
+    }
 }
 
 
