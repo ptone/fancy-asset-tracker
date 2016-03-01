@@ -7,8 +7,6 @@
 #include <ctype.h>
 
 
-
-
 #define mySerial Serial1
 Adafruit_GPS GPS(&mySerial);
 Adafruit_LIS3DH accel = Adafruit_LIS3DH(A2, A5, A4, A3);
@@ -18,38 +16,6 @@ FuelGauge fuel;
 #define MY_NAME "AssetTracker"
 
 #define CLICKTHRESHHOLD 20
-
-
-bool debug = true;
-int lastSecond = 0;
-bool ledState = false;
-
-int trackerMode = 0;
-// 0 uninitialized (implicit)
-// 1 setup (implicit)
-// 2 acquiring GPS
-// 3 active - watch accelerometer
-// 4 sleeping (implicit)
-// 5 low battery mode
-
-// lets keep the radio off until we get a fix, or 2 minutes go by.
-SYSTEM_MODE(SEMI_AUTOMATIC);
-
-
-STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
-
-
-unsigned long lastMotion = 0;
-unsigned long lastPublish = 0;
-time_t lastIdleCheckin = 0;
-
-/* int lastKnownClockHour = 0; */
-
-unsigned long lastGPSPoll = 0;
-// TODO is it make any different slow or fast? // 3000
-unsigned long GPSPollInterval = 500;
-bool hasMotion = false;
-bool inSleep = false;
 
 #define PUBLISH_DELAY (60 * 1000)
 
@@ -68,6 +34,30 @@ bool inSleep = false;
 // (seconds)
 #define MAX_IDLE_CHECKIN_DELAY (HOW_LONG_SHOULD_WE_SLEEP - 60)
 
+// lets keep the radio off until we get a fix, or 2 minutes go by.
+SYSTEM_MODE(SEMI_AUTOMATIC);
+
+STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
+
+bool debug = false;
+bool GPSFixedOnce = false;
+unsigned long lastMotion = 0;
+unsigned long lastPublish = 0;
+time_t lastIdleCheckin = 0;
+unsigned long lastGPSPoll = 0;
+// TODO is it make any difference slow or fast? // 3000
+unsigned long GPSPollInterval = 500;
+bool hasMotion = false;
+bool inSleep = false;
+
+int trackerMode = 0;
+// 0 uninitialized (implicit)
+// 1 setup (implicit)
+// 2 acquiring GPS
+// 3 active - watch accelerometer
+// 4 sleeping (implicit)
+// 5 low battery mode
+// 6 charging
 
 void setup() {
     debugPrint("setup");
@@ -83,6 +73,9 @@ void setup() {
     // for blinking.
     pinMode(D7, OUTPUT);
     digitalWrite(D7, LOW);
+
+    // used to trigger "charge mode"
+    pinMode(D2, INPUT_PULLUP);
 
     GPS.begin(9600);
     mySerial.begin(9600);
@@ -105,9 +98,18 @@ void setup() {
 }
 
 
-
 void loop() {
     unsigned long now = millis();
+    digitalWrite(D7, LOW);
+    if (digitalRead(D2) == 0) {
+        // pin D2 bridged to ground signals charging mode
+        // no connections should be made
+        trackerMode = 6;
+    } else {
+        if (trackerMode == 6) {
+            trackerMode = 2;
+        }
+    }
     switch (trackerMode) {
         case 2: //acquiring GPS
             debugPrint("case 2: acquiring GPS");
@@ -128,13 +130,18 @@ void loop() {
                     debugPrint("have GPS signal");
                     Particle.connect();
                     publishGPS();
+                    if (!GPSFixedOnce) {
+                        GPSFixedOnce = true;
+                        Particle.publish("S", "C");
+                    }
                     trackerMode = 3;
                     // over-ride and set low power mode if battery low
                     if (lowBatt) { trackerMode = 5; }
                     break;
                 }
                 // no GPS after given time
-                if (millis() > GPS_FIX_TIME) {
+                if (GPSFixedOnce && (millis() > GPS_FIX_TIME)) {
+                    //don't sleep unless we've had one GPS fix ever
                     blink(5);
                     // been a while and still no connect
                     if (Particle.connected() == false) {
@@ -216,6 +223,7 @@ void loop() {
                 // if the accel triggers an interrupt, we'll wakeup earlier than that.
                 Serial.println(now);
                 debugPrint("sleeping");
+                accel.setClick(1, CLICKTHRESHHOLD);
                 Particle.publish("S", "S");
 
                 lastPublish = 0;
@@ -234,7 +242,6 @@ void loop() {
                 trackerMode = 2;
                 blink(4);
                 inSleep = true;
-                accel.setClick(1, CLICKTHRESHHOLD);
                 System.sleep(SLEEP_MODE_DEEP, HOW_LONG_SHOULD_WE_SLEEP);
                 /* System.sleep(uint16_t wakeUpPin, uint16_t edgeTriggerMode, long seconds) */
                 /* System.sleep(WKP, CHANGE, HOW_LONG_SHOULD_WE_SLEEP); */
@@ -258,6 +265,12 @@ void loop() {
             inSleep = true;
             accel.setClick(0, CLICKTHRESHHOLD);
             System.sleep(SLEEP_MODE_DEEP, HOW_LONG_SHOULD_WE_SLEEP);
+        case 6: // charge mode
+            if (Particle.connected() == true) {
+                Particle.disconnect();
+            }
+            digitalWrite(D7, HIGH);
+            delay(3000);
     }
     delay(100);
 }
