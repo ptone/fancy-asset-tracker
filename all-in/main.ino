@@ -137,7 +137,7 @@ void loop() {
                 lastGPSPoll = now;
                 blink(1);
                 checkGPS();
-                bool lowBatt = fuel.getSoC() < .15;
+                bool lowBatt = fuel.getSoC() < .25;
                 if (GPS.latitude != 0) {
                     dPrint("have GPS signal");
                     Particle.connect();
