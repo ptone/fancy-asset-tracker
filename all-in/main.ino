@@ -36,7 +36,7 @@ FuelGauge fuel;
 
 #define GPS_POLL_INTERVAL 1000
 
-#define BUILD_VERSION 21
+#define BUILD_VERSION 26
 
 
 
@@ -358,12 +358,12 @@ void publishGPS() {
     String gps_line =
           "{\"lat\":"    + String(convertDegMinToDecDeg(GPS.latitude))
         + ",\"lon\":-"   + String(convertDegMinToDecDeg(GPS.longitude))
-        + ",\"a\":"      + String(GPS.altitude)
-        + ",\"q\":"      + String(GPS.fixquality)
+        /* + ",\"a\":"      + String(GPS.altitude) */
+        /* + ",\"q\":"      + String(GPS.fixquality) */
         + ",\"spd\":"    + String(GPS.speed)
-        + ",\"mot\":"    + String(motionInTheLastMinute)
-        + ",\"s\": "     + String(GPS.satellites)
-        + ",\"vcc\":"    + String(fuel.getVCell())
+        /* + ",\"mot\":"    + String(motionInTheLastMinute) */
+        /* + ",\"s\": "     + String(GPS.satellites) */
+        /* + ",\"vcc\":"    + String(fuel.getVCell()) */
         + ",\"soc\":"    + String(fuel.getSoC())
         + ",\"v\":"      + String(BUILD_VERSION)
         + "}";
