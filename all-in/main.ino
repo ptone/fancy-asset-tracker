@@ -36,7 +36,7 @@ FuelGauge fuel;
 
 #define GPS_POLL_INTERVAL 1000
 
-#define BUILD_VERSION 18
+#define BUILD_VERSION 21
 
 
 
@@ -107,8 +107,10 @@ void loop() {
     // note millis resets to 0 on every wake
     unsigned long now = millis();
     dPrint(String::format("now: %lu", now));
-
+    //ensure that we pull a fresh latitude
+    GPS.latitude = 0.0;
     digitalWrite(D7, LOW);
+
     if (digitalRead(D2) == 0) {
         // pin D2 bridged to ground signals charging mode
         // no connections should be made
@@ -119,6 +121,7 @@ void loop() {
             trackerMode = 2;
         }
     }
+
     switch (trackerMode) {
         case 2: //acquiring GPS
             dPrint("case 2: acquiring GPS");
@@ -220,9 +223,11 @@ void loop() {
             dPrint("lastPublish is " + String(lastPublish));
             if (((millis() - lastPublish) > PUBLISH_DELAY) || (lastPublish == 0)) {
                 blink(3);
-                lastPublish = millis();
                 checkGPS();
-                publishGPS();
+                if (GPS.latitude != 0.0) {
+                    publishGPS();
+                    lastPublish = millis();
+                }
             }
 
             // use "now" instead of millis...  If it takes us a REALLY long time to connect, we don't want to
@@ -328,19 +333,15 @@ bool waitCellReady() {
 void checkGPS() {
     // process and dump everything from the module through the library.
     dPrint("check GPS");
-    bool gotValidData = false;
-    while (!gotValidData) {
-        while (mySerial.available()) {
-            char c = GPS.read();
-            Serial.print(c);
+    while (mySerial.available()) {
+        char c = GPS.read();
+        Serial.print(c);
 
-            if (GPS.newNMEAreceived()) {
-                dPrint("NMEA received");
-                GPS.parse(GPS.lastNMEA());
-                dPrint("GPS Latitude: ");
-                Serial.println(GPS.latitude);
-                gotValidData = (GPS.latitude != 0);
-            }
+        if (GPS.newNMEAreceived()) {
+            dPrint("NMEA received");
+            GPS.parse(GPS.lastNMEA());
+            dPrint("GPS Latitude: ");
+            Serial.println(GPS.latitude);
         }
     }
 }
