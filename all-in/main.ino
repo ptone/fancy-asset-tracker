@@ -36,7 +36,7 @@ FuelGauge fuel;
 
 #define GPS_POLL_INTERVAL 1000
 
-#define BUILD_VERSION 34
+#define BUILD_VERSION 35
 
 
 
@@ -46,8 +46,8 @@ unsigned long lastMotion = 0;
 unsigned long lastPublish = 0;
 int lastIdleCheckin = 0;
 unsigned long lastGPSPoll = 0;
+unsigned long wakeMillis = 0;
 bool hasMotion = false;
-bool inSleep = false;
 
 
 int trackerMode = 0;
@@ -151,12 +151,6 @@ void loop() {
     switch (trackerMode) {
         case 2: //acquiring GPS
             dPrint("case 2: acquiring GPS");
-            if (inSleep) {
-                dPrint("waking!");
-                // avoid going right back to sleep
-                lastMotion = now;
-                inSleep = false;
-            }
             // only read GPS every<GPS_POLL_INTERVAL> seconds
             dPrint(String::format("now: %lu, lastPoll:%lu", now, lastGPSPoll));
             if (now > (lastGPSPoll + GPS_POLL_INTERVAL)) {
@@ -181,8 +175,7 @@ void loop() {
                     break;
                 }
                 // no GPS after given time
-                // TODO if millis is retain on sleep properly - this fires too soon
-                if ((debug || GPSFixedOnce) && (millis() > GPS_FIX_TIME)) {
+                if ((debug || GPSFixedOnce) && ((millis() - wakeMillis) > GPS_FIX_TIME)) {
                     //don't sleep unless we've had one GPS fix ever
                     blink(5);
                     // been a while and still no connect
@@ -195,8 +188,8 @@ void loop() {
                     dPrint("sending GPS lock failure");
                     Particle.publish("S", "F");
                     delay(3000);
-                    inSleep = true;
                     //accel.setClick(0, CLICKTHRESHHOLD);
+                    trackerMode = 4;
                     // TODO - even more in lowbattery mode?
                     if (debug) {
                         System.sleep(SLEEP_MODE_DEEP, (60));
@@ -280,15 +273,20 @@ void loop() {
                 Particle.disconnect();
 
                 // wake in GPS acquisition mode
-                trackerMode = 2;
+                trackerMode = 4;
                 blink(4);
-                inSleep = true;
                 /* System.sleep(SLEEP_MODE_DEEP, HOW_LONG_SHOULD_WE_SLEEP); */
                 System.sleep(WKP, CHANGE, HOW_LONG_SHOULD_WE_SLEEP);
                 /* System.sleep(uint16_t wakeUpPin, uint16_t edgeTriggerMode, long seconds) */
                 /* System.sleep(WKP, CHANGE, HOW_LONG_SHOULD_WE_SLEEP); */
             }
             break;
+        case 4: //wake
+            dPrint("waking");
+            wakeMillis = millis();
+            lastMotion = now;
+            trackerMode = 2;
+
         case 5: //low battery
             // we woke in GPS mode - so some status was sent already
 
@@ -300,13 +298,11 @@ void loop() {
             // turn off particle radio
             Particle.disconnect();
 
-            // wake in GPS acquisition mode
-            trackerMode = 2;
+            trackerMode = 4;
             // go into true deep sleep - this should NOT wake on motion
             blink(4);
-            inSleep = true;
             //TODO this should be safe, but debugging some overly sleepy
-            accel.setClick(0, CLICKTHRESHHOLD);
+            //accel.setClick(0, CLICKTHRESHHOLD);
             delay(5000);
             System.sleep(SLEEP_MODE_DEEP, HOW_LONG_SHOULD_WE_SLEEP);
         case 6: // charge mode
