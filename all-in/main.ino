@@ -36,7 +36,7 @@ FuelGauge fuel;
 
 #define GPS_POLL_INTERVAL 1000
 
-#define BUILD_VERSION 26
+#define BUILD_VERSION 34
 
 
 
@@ -69,15 +69,16 @@ void setup() {
     lastMotion = 0;
     lastPublish = 0;
 
+    // for blinking.
+    pinMode(D7, OUTPUT);
+    digitalWrite(D7, HIGH);
+
     initAccel();
 
     // electron asset tracker shield needs this to enable the power to the gps module.
     pinMode(D6, OUTPUT);
     digitalWrite(D6, LOW);
 
-    // for blinking.
-    pinMode(D7, OUTPUT);
-    digitalWrite(D7, LOW);
 
     // used to trigger "charge mode"
     pinMode(D2, INPUT_PULLUP);
@@ -100,6 +101,31 @@ void setup() {
     GPS.sendCommand(PGCMD_NOANTENNA);
     delay(250);
     trackerMode = 2;
+
+    //setup first fix
+    Particle.connect();
+    waitCellReady();
+    delay(1000);
+    //googleplex location
+    //37.4184,-122.0880,100
+    String locationString = "34.447847,-119.730957,200";
+    time_t timeValue = Time.now();
+    String timeString = Time.format(timeValue, "%Y,%m,%d,%H,%M,%S");
+    //  PMTK740,YYYY,MM,DD,hh,mm,ss*CS<CR><LF>
+    //  PMTK741,Lat,Long,Alt,YYYY,MM,DD,hh,mm,ss *CS<CR><LF>
+    //The packet contains reference location for the GPS receiver. To have faster TTFF, the accuracy of the location shall be better than 30km.
+    String gpsTimeCmd = "PMTK740," + timeString;
+    String locationTimeCmd = "PMTK741,"+locationString + "," + timeString;
+
+
+    String cmd = String::format("$%s*%02x", locationTimeCmd.c_str(), crc8(locationTimeCmd));
+    mySerial.println(cmd);
+    //GPS.sendCommand(cmd.c_str());     // why doesn't this support const char *...
+    delay(250);
+    Cellular.off();
+
+    //setup done
+    digitalWrite(D7, LOW);
 }
 
 
@@ -385,4 +411,16 @@ void dPrint(String msg) {
     if (debug) {
         Serial.println(msg);
     }
+}
+
+
+int crc8(String str) {
+  int len = str.length();
+  const char * buffer = str.c_str();
+
+  int crc = 0;
+  for(int i=0;i<len;i++) {
+    crc ^= (buffer[i] & 0xff);
+  }
+  return crc;
 }
