@@ -20,7 +20,7 @@ FuelGauge fuel;
 #define PUBLISH_DELAY (60 * 1000)
 
 // how long to try and fix the GPS
-#define GPS_FIX_TIME (2 * 60 * 1000)
+#define GPS_FIX_TIME (3 * 60 * 1000)
 
 // if no motion for 3 minutes, sleep! (milliseconds)
 #define NO_MOTION_IDLE_SLEEP_DELAY (3 * 60 * 1000)
@@ -36,12 +36,14 @@ FuelGauge fuel;
 
 #define GPS_POLL_INTERVAL 1000
 
-#define BUILD_VERSION 35
+#define BUILD_VERSION 51
 
 
 
 bool debug = false;
+int cellDebug = 0;
 bool GPSFixedOnce = false;
+bool clockSet = false;
 unsigned long lastMotion = 0;
 unsigned long lastPublish = 0;
 int lastIdleCheckin = 0;
@@ -55,7 +57,7 @@ int trackerMode = 0;
 // 1 setup (implicit)
 // 2 acquiring GPS
 // 3 active - watch accelerometer
-// 4 sleeping (implicit)
+// 4 sleeping/initial wake
 // 5 low battery mode
 // 6 charging
 
@@ -100,30 +102,11 @@ void setup() {
     // turn off antenna updates
     GPS.sendCommand(PGCMD_NOANTENNA);
     delay(250);
-    trackerMode = 2;
+    trackerMode = 4;
 
-    //setup first fix
-    Particle.connect();
-    waitCellReady();
-    delay(1000);
-    //googleplex location
-    //37.4184,-122.0880,100
-    String locationString = "34.447847,-119.730957,200";
-    time_t timeValue = Time.now();
-    String timeString = Time.format(timeValue, "%Y,%m,%d,%H,%M,%S");
-    //  PMTK740,YYYY,MM,DD,hh,mm,ss*CS<CR><LF>
-    //  PMTK741,Lat,Long,Alt,YYYY,MM,DD,hh,mm,ss *CS<CR><LF>
-    //The packet contains reference location for the GPS receiver. To have faster TTFF, the accuracy of the location shall be better than 30km.
-    String gpsTimeCmd = "PMTK740," + timeString;
-    String locationTimeCmd = "PMTK741,"+locationString + "," + timeString;
-
-
-    String cmd = String::format("$%s*%02x", locationTimeCmd.c_str(), crc8(locationTimeCmd));
-    mySerial.println(cmd);
-    //GPS.sendCommand(cmd.c_str());     // why doesn't this support const char *...
-    delay(250);
-    Cellular.off();
-
+    // allow debugging remotely
+    Particle.variable("cellDebug", cellDebug);
+    Particle.function("setCellDebug", setCellDebug);
     //setup done
     digitalWrite(D7, LOW);
 }
@@ -140,11 +123,13 @@ void loop() {
     if (digitalRead(D2) == 0) {
         // pin D2 bridged to ground signals charging mode
         // no connections should be made
+        dPrint("enter charge mode");
         trackerMode = 6;
     } else {
         if (trackerMode == 6) {
             // jumper just unplugged - go into acquisition mode
             trackerMode = 2;
+            dPrint("enter gps fix mode");
         }
     }
 
@@ -152,6 +137,9 @@ void loop() {
         case 2: //acquiring GPS
             dPrint("case 2: acquiring GPS");
             // only read GPS every<GPS_POLL_INTERVAL> seconds
+            if (!clockSet) {
+                setTimePos(true);
+            }
             dPrint(String::format("now: %lu, lastPoll:%lu", now, lastGPSPoll));
             if (now > (lastGPSPoll + GPS_POLL_INTERVAL)) {
                 lastGPSPoll = now;
@@ -169,6 +157,7 @@ void loop() {
                     } else {
                         Particle.publish("S", String::format("c%lu", now / 1000));
                     }
+                    lastMotion = now;
                     trackerMode = 3;
                     // over-ride and set low power mode if battery low
                     if (lowBatt) { trackerMode = 5; }
@@ -181,7 +170,7 @@ void loop() {
                     // been a while and still no connect
                     if (Particle.connected() == false) {
                         Particle.connect();
-                        dPrint("connecting");
+                        dPrint("connecting for GPS failure");
                         // clock syncs here
                     }
                     waitCellReady();
@@ -208,6 +197,7 @@ void loop() {
             if (lastMotion > now) { lastMotion = now; }
             if (lastPublish > now) { lastPublish = now; }
 
+            dPrint(String::format("now: %lu, lastmontion:%lu", now, lastMotion));
             // we'll be woken by motion, lets keep listening for more motion.
             // if we get two in a row, then we'll connect to the internet and start reporting in.
             hasMotion = digitalRead(WKP);
@@ -241,7 +231,6 @@ void loop() {
             // have we published recently?
             dPrint("lastPublish is " + String(lastPublish));
             if (((millis() - lastPublish) > PUBLISH_DELAY) || (lastPublish == 0)) {
-                blink(3);
                 checkGPS();
                 if (GPS.latitude != 0.0) {
                     publishGPS();
@@ -286,6 +275,9 @@ void loop() {
             wakeMillis = millis();
             lastMotion = now;
             trackerMode = 2;
+            lastGPSPoll = 0;
+            dPrint("done waking");
+            break;
 
         case 5: //low battery
             // we woke in GPS mode - so some status was sent already
@@ -305,12 +297,14 @@ void loop() {
             //accel.setClick(0, CLICKTHRESHHOLD);
             delay(5000);
             System.sleep(SLEEP_MODE_DEEP, HOW_LONG_SHOULD_WE_SLEEP);
+            break;
         case 6: // charge mode
             if (Particle.connected() == true) {
                 Particle.disconnect();
             }
             digitalWrite(D7, HIGH);
             delay(3000);
+            break;
     }
     if (debug){
         //lets not flood the serial console...
@@ -390,8 +384,37 @@ void publishGPS() {
         + ",\"v\":"      + String(BUILD_VERSION)
         + "}";
 
-    blink(2);
+    blink(3);
     Particle.publish("G", gps_line, 60, PRIVATE);
+    delay(200);
+}
+
+void setTimePos(bool celloff) {
+    dPrint("setting location and time on GPS");
+    //setup first fix
+    Particle.connect();
+    waitCellReady();
+    delay(1000);
+    //googleplex location
+    //37.4184,-122.0880,100
+    String locationString = "34.447847,-119.730957,200";
+    time_t timeValue = Time.now();
+    String timeString = Time.format(timeValue, "%Y,%m,%d,%H,%M,%S");
+    //  PMTK740,YYYY,MM,DD,hh,mm,ss*CS<CR><LF>
+    //  PMTK741,Lat,Long,Alt,YYYY,MM,DD,hh,mm,ss *CS<CR><LF>
+    //The packet contains reference location for the GPS receiver. To have faster TTFF, the accuracy of the location shall be better than 30km.
+    /* String gpsTimeCmd = "PMTK740," + timeString; */
+    String locationTimeCmd = "PMTK741,"+locationString + "," + timeString;
+    String cmd = String::format("$%s*%02x", locationTimeCmd.c_str(), crc8(locationTimeCmd));
+    dPrint(locationTimeCmd);
+    mySerial.println(cmd);
+    //GPS.sendCommand(cmd.c_str());     // why doesn't this support const char *...
+    clockSet = true;
+    delay(250);
+    if (celloff) {
+        dPrint("turning off cellular");
+        Cellular.off();
+    }
 }
 
 void blink(int ct) {
@@ -407,8 +430,21 @@ void dPrint(String msg) {
     if (debug) {
         Serial.println(msg);
     }
+    if ((cellDebug == 1) && (Particle.connected() == true)) {
+        // note will churn through data
+        Particle.publish("S", msg);
+    }
 }
 
+int setCellDebug(String command) {
+    if (command=="on") {
+        cellDebug = 1;
+    }
+    else if (command=="off") {
+        cellDebug = 0;
+    }
+    return cellDebug;
+}
 
 int crc8(String str) {
   int len = str.length();
